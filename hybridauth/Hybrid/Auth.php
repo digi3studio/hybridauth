@@ -1,362 +1,515 @@
 <?php
-/*!
-* HybridAuth
-* http://hybridauth.sourceforge.net | http://github.com/hybridauth/hybridauth
-* (c) 2009-2012, HybridAuth authors | http://hybridauth.sourceforge.net/licenses.html
-*/
+/**
+ * HybridAuth
+ * 
+ * An open source Web based Single-Sign-On PHP Library used to authentificates users with
+ * major Web account providers and accessing social and data apis at Google, Facebook,
+ * Yahoo!, MySpace, Twitter, Windows live ID, etc. 
+ *
+ * Copyright (c) 2009 (http://hybridauth.sourceforge.net)
+ *
+ * @package     Hybrid_Auth
+ * @author      hybridAuth Dev Team
+ * @copyright   Copyright (c) 2009, hybridAuth Dev Team.
+ * @license     http://hybridauth.sourceforge.net/licenses.html under MIT and GPL
+ * @link        http://hybridauth.sourceforge.net 
+ */
+
+// ------------------------------------------------------------------------
 
 /**
- * Hybrid_Auth class
- * 
- * Hybrid_Auth class provide a simple way to authenticate users via OpenID and OAuth.
- * 
- * Generally, Hybrid_Auth is the only class you should instanciate and use throughout your application.
+ * The main include file for Hybrid_Auth package
+ *
+ * The Hybrid_Auth class provides methods for creating an authentication 
+ * system using PHP and major account providers ( OpenID, AOL, Facebook, 
+ * Google, Yahoo, Twitter, MySpace, Live ID, etc. ) 
+ *
+ * @package    Hybrid_Auth 
+ * @author     Zachy <hybridauth@gmail.com>
+ * @version    1.0
+ * @since      HybridAuth 1.0.1 
  */
 class Hybrid_Auth 
 {
-	public static $version = "2.1.0-dev";
-
-	public static $config  = array();
-
-	public static $store   = NULL;
-
-	public static $error   = NULL;
-
-	public static $logger  = NULL;
-
-	// --------------------------------------------------------------------
-
-	/**
-	* Try to start a new session of none then initialize Hybrid_Auth
-	* 
-	* Hybrid_Auth constructor will require either a valid config array or
-	* a path for a configuration file as parameter. To know more please 
-	* refer to the Configuration section:
-	* http://hybridauth.sourceforge.net/userguide/Configuration.html
-	*/
-	function __construct( $config )
-	{ 
-		Hybrid_Auth::initialize( $config ); 
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* Try to initialize Hybrid_Auth with given $config hash or file
-	*/
-	public static function initialize( $config )
-	{
-		if( ! is_array( $config ) && ! file_exists( $config ) ){
-			throw new Exception( "Hybriauth config does not exist on the given path.", 1 );
-		}
-
-		if( ! is_array( $config ) ){
-			$config = include $config;
-		}
-
-		// build some need'd paths
-		$config["path_base"]        = realpath( dirname( __FILE__ ) )  . "/"; 
-		$config["path_libraries"]   = $config["path_base"] . "thirdparty/";
-		$config["path_resources"]   = $config["path_base"] . "resources/";
-		$config["path_providers"]   = $config["path_base"] . "Providers/";
-
-		// reset debug mode
-		if( ! isset( $config["debug_mode"] ) ){
-			$config["debug_mode"] = false;
-			$config["debug_file"] = null;
-		}
-
-		# load hybridauth required files, a autoload is on the way...
-		require_once $config["path_base"] . "Error.php";
-		require_once $config["path_base"] . "Logger.php";
-
-		require_once $config["path_base"] . "Storage.php";
-
-		require_once $config["path_base"] . "Provider_Adapter.php";
-
-		require_once $config["path_base"] . "Provider_Model.php";
-		require_once $config["path_base"] . "Provider_Model_OpenID.php";
-		require_once $config["path_base"] . "Provider_Model_OAuth1.php";
-		require_once $config["path_base"] . "Provider_Model_OAuth2.php";
-
-		require_once $config["path_base"] . "User.php";
-		require_once $config["path_base"] . "User_Profile.php";
-		require_once $config["path_base"] . "User_Contact.php";
-		require_once $config["path_base"] . "User_Activity.php";
-
-		// hash given config
-		Hybrid_Auth::$config = $config;
-
-		// instace of log mng
-		Hybrid_Auth::$logger = new Hybrid_Logger();
-
-		// instace of errors mng
-		Hybrid_Auth::$error = new Hybrid_Error();
-
-		// start session storage mng
-		Hybrid_Auth::$store = new Hybrid_Storage();
-
-		Hybrid_Logger::info( "Enter Hybrid_Auth::initialize()"); 
-		Hybrid_Logger::info( "Hybrid_Auth::initialize(). PHP version: " . PHP_VERSION ); 
-		Hybrid_Logger::info( "Hybrid_Auth::initialize(). Hybrid_Auth version: " . Hybrid_Auth::$version ); 
-		Hybrid_Logger::info( "Hybrid_Auth::initialize(). Hybrid_Auth called from: " . Hybrid_Auth::getCurrentUrl() ); 
-
-		// PHP Curl extension [http://www.php.net/manual/en/intro.curl.php]
-		if ( ! function_exists('curl_init') ) {
-			Hybrid_Logger::error('Hybridauth Library needs the CURL PHP extension.');
-			throw new Exception('Hybridauth Library needs the CURL PHP extension.');
-		}
-
-		// PHP JSON extension [http://php.net/manual/en/book.json.php]
-		if ( ! function_exists('json_decode') ) {
-			Hybrid_Logger::error('Hybridauth Library needs the JSON PHP extension.');
-			throw new Exception('Hybridauth Library needs the JSON PHP extension.');
-		}
-
-		// OAuth PECL extension is not compatible with this library
-		if( extension_loaded('oauth') ) {
-			Hybrid_Logger::error('Hybridauth Library not compatible with installed PECL OAuth extension. Please disable it.');
-			throw new Exception('Hybridauth Library not compatible with installed PECL OAuth extension. Please disable it.');
-		}
-
-		// session.name
-		if( session_name() != "PHPSESSID" ){
-			Hybrid_Logger::info('PHP session.name diff from default PHPSESSID. http://php.net/manual/en/session.configuration.php#ini.session.name.');
-		}
-
-		// safe_mode is on
-		if( ini_get('safe_mode') ){
-			Hybrid_Logger::info('PHP safe_mode is on. http://php.net/safe-mode.');
-		}
-
-		// open basedir is on
-		if( ini_get('open_basedir') ){
-			Hybrid_Logger::info('PHP open_basedir is on. http://php.net/open-basedir.');
-		}
-
-		Hybrid_Logger::debug( "Hybrid_Auth initialize. dump used config: ", serialize( $config ) );
-		Hybrid_Logger::debug( "Hybrid_Auth initialize. dump current session: ", Hybrid_Auth::storage()->getSessionData() ); 
-		Hybrid_Logger::info( "Hybrid_Auth initialize: check if any error is stored on the endpoint..." );
-
-		if( Hybrid_Error::hasError() ){ 
-			$m = Hybrid_Error::getErrorMessage();
-			$c = Hybrid_Error::getErrorCode();
-			$p = Hybrid_Error::getErrorPrevious();
-
-			Hybrid_Logger::error( "Hybrid_Auth initialize: A stored Error found, Throw an new Exception and delete it from the store: Error#$c, '$m'" );
-
-			Hybrid_Error::clearError();
-
-			// try to provide the previous if any
-			// Exception::getPrevious (PHP 5 >= 5.3.0) http://php.net/manual/en/exception.getprevious.php
-			if ( version_compare( PHP_VERSION, '5.3.0', '>=' ) && ($p instanceof Exception) ) { 
-				throw new Exception( $m, $c, $p );
-			}
-			else{
-				throw new Exception( $m, $c );
-			}
-		}
-
-		Hybrid_Logger::info( "Hybrid_Auth initialize: no error found. initialization succeed." );
-
-		// Endof initialize 
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
+   /**
 	* Hybrid storage system accessor
 	*
-	* Users sessions are stored using HybridAuth storage system ( HybridAuth 2.0 handle PHP Session only) and can be acessed directly by
+	* Users sessions are stored using Hybrid storage system and can be acessed directly by
 	* Hybrid_Auth::storage()->get($key) to retrieves the data for the given key, or calling
 	* Hybrid_Auth::storage()->set($key, $value) to store the key => $value set.
-	*/
-	public static function storage()
-	{
-		return Hybrid_Auth::$store;
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* Get hybridauth session data. 
-	*/
-	function getSessionData()
-	{ 
-		return Hybrid_Auth::storage()->getSessionData();
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* restore hybridauth session data. 
-	*/
-	function restoreSessionData( $sessiondata = NULL )
-	{ 
-		Hybrid_Auth::storage()->restoreSessionData( $sessiondata );
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* Try to authenticate the user with a given provider. 
+	* 
+	* eg.: 
+	*   Current user id session
+	*   Hybrid_Auth::storage()->get( "hauth_session.hauth_token"		)
+	*   Hybrid_Auth::storage()->get( "hauth_session.hauth_time"         )
 	*
-	* If the user is already connected we just return and instance of provider adapter,
-	* ELSE, try to authenticate and authorize the user with the provider. 
+	*   User state, profile, contacts list, etecta
+	*	Hybrid_Auth::storage()->get( "hauth_session.is_logged_in"       )
+	*	Hybrid_Auth::storage()->get( "hauth_session.user.data"          )
 	*
-	* $params is generally an array with required info in order for this provider and HybridAuth to work,
-	*  like :
-	*          hauth_return_to: URL to call back after authentication is done
-	*        openid_identifier: The OpenID identity provider identifier
-	*           google_service: can be "Users" for Google user accounts service or "Apps" for Google hosted Apps
+	*   if shit happen, we store errors too
+	*	Hybrid_Auth::storage()->get( "hauth_session.error.satus"        )
+	*	Hybrid_Auth::storage()->get( "hauth_session.error.message"      )
+	*	Hybrid_Auth::storage()->get( "hauth_session.error.code"         )
+	*	Hybrid_Auth::storage()->get( "hauth_session.error.trace"        )
+	*
+	*   some extra identity provider (IPD or IDProvider) params
+	*	Hybrid_Auth::storage()->get( "hauth_session.id_provider_id"     )
+	*	Hybrid_Auth::storage()->get( "hauth_session.id_provider_params" )
+	*	Hybrid_Auth::storage()->get( "hauth_session.hauth_endpoint"     )
+	*	Hybrid_Auth::storage()->get( "hauth_session.hauth_return_to"    )
+	* 
+	* Hybrid storage system based on from osapiStorage (opensocial php client) 
+	* almost 'AS IS', osapiStorage was written by Chris Chabot under apache license.
+	* osapiStorage implement three type of backend to store user session : Memcahe, Files
+	* and Apc, and developers are free to implement their own session store implementations 
+	* using Hybrid_Storage model
+	*
+	* @return Hybrid_Storage
+	* @see    Hybrid_Storage 
 	*/
-	public static function authenticate( $providerId, $params = NULL )
+	public static function storage( )
 	{
-		Hybrid_Logger::info( "Enter Hybrid_Auth::authenticate( $providerId )" );
+		GLOBAL $GLOBAL_HYBRID_AUTH_STORAGE_INSTANCE;
 
-		// if user not connected to $providerId then try setup a new adapter and start the login process for this provider
-		if( ! Hybrid_Auth::storage()->get( "hauth_session.$providerId.is_logged_in" ) ){ 
-			Hybrid_Logger::info( "Hybrid_Auth::authenticate( $providerId ), User not connected to the provider. Try to authenticate.." );
+		return $GLOBAL_HYBRID_AUTH_STORAGE_INSTANCE;
+	}
 
-			$provider_adapter = Hybrid_Auth::setup( $providerId, $params );
+	// --------------------------------------------------------------------
 
-			$provider_adapter->login();
+   /**
+	* try to start the Hybrid storage system
+	*
+	* @return boolean TRUE if storage obj created
+	* @throws Exception if 
+	* @see    Hybrid_Storage 
+	*/
+	public static function startStorage( )
+	{
+		Hybrid_Logger::info( "Enter Hybrid_Auth::startStorage()" );
+
+		GLOBAL $GLOBAL_HYBRID_AUTH_STORAGE_TYPE;
+		GLOBAL $GLOBAL_HYBRID_AUTH_STORAGE_PATH;
+		GLOBAL $GLOBAL_HYBRID_AUTH_STORAGE_HOST;
+		GLOBAL $GLOBAL_HYBRID_AUTH_STORAGE_PASS;
+		GLOBAL $GLOBAL_HYBRID_AUTH_STORAGE_INSTANCE;
+
+		$hauthStore = "Hybrid_Storage_{$GLOBAL_HYBRID_AUTH_STORAGE_TYPE}";
+
+		switch( $GLOBAL_HYBRID_AUTH_STORAGE_TYPE )
+		{
+			case "Session"	:	$GLOBAL_HYBRID_AUTH_STORAGE_INSTANCE = new $hauthStore();
+								break;
+			case "File"		:	$GLOBAL_HYBRID_AUTH_STORAGE_INSTANCE = new $hauthStore( $GLOBAL_HYBRID_AUTH_STORAGE_PATH );
+								break;
+			case "Apc"		:
+			case "Memcache"	:	$GLOBAL_HYBRID_AUTH_STORAGE_INSTANCE = new $hauthStore
+																		( 
+																			$GLOBAL_HYBRID_AUTH_STORAGE_HOST,
+																			$GLOBAL_HYBRID_AUTH_STORAGE_PASS
+																		); 
+								break;
+			default			: 	throw new Exception( "Unknwon Storage type [{$GLOBAL_HYBRID_AUTH_STORAGE_TYPE}], check " .
+								"\$GLOBAL_HYBRID_AUTH_STORAGE_TYPE value in HybridAuth configuration file!" );
 		}
 
-		// else, then return the adapter instance for the given provider
-		else{
-			Hybrid_Logger::info( "Hybrid_Auth::authenticate( $providerId ), User is already connected to this provider. Return the adapter instance." );
+		$GLOBAL_HYBRID_AUTH_STORAGE_INSTANCE->storageKey = session_id();
 
-			return Hybrid_Auth::getAdapter( $providerId );
-		}
+		Hybrid_Logger::info( "Hybrid_Auth::startStorage() storageKey", $GLOBAL_HYBRID_AUTH_STORAGE_INSTANCE->storageKey );
+
+		return TRUE;
 	}
 
 	// --------------------------------------------------------------------
 
-	/**
-	* Return the adapter instance for an authenticated provider
-	*/ 
-	public static function getAdapter( $providerId = NULL )
+   /**
+	* expire some saved vars for the current connected user
+	*
+	* @see    Hybrid_Storage 
+	*/
+	public static function expireStorage()
 	{
-		Hybrid_Logger::info( "Enter Hybrid_Auth::getAdapter( $providerId )" );
+		Hybrid_Logger::info( "Enter Hybrid_Auth::expireStorage()" );
 
-		return Hybrid_Auth::setup( $providerId );
+		// expire hauth tokens
+		Hybrid_Auth::storage()->delete( "hauth_session.hauth_token"        );
+		Hybrid_Auth::storage()->delete( "hauth_session.hauth_time"         );
+
+		// expire session, params and data
+		Hybrid_Auth::storage()->delete( "hauth_session.is_logged_in"       );
+		Hybrid_Auth::storage()->delete( "hauth_session.user.data"          );
+
+		Hybrid_Auth::storage()->delete( "hauth_session.error.status"       );
+		Hybrid_Auth::storage()->delete( "hauth_session.error.message"      );
+		Hybrid_Auth::storage()->delete( "hauth_session.error.code"         );
+		Hybrid_Auth::storage()->delete( "hauth_session.error.trace"        );
+
+		Hybrid_Auth::storage()->delete( "hauth_session.warning"            );
+
+		Hybrid_Auth::storage()->delete( "hauth_session.id_provider_id"     );
+		Hybrid_Auth::storage()->delete( "hauth_session.id_provider_params" );
+
+		Hybrid_Auth::storage()->delete( "hauth_session.hauth_endpoint"     );
+		Hybrid_Auth::storage()->delete( "hauth_session.hauth_return_to"    );
+
+		// expire tokens
+		Hybrid_Auth::storage()->delete( "hauth_session.twitter.oauth_access_token" );
+		Hybrid_Auth::storage()->delete( "hauth_session.twitter.oauth_access_token_secret" );
+		Hybrid_Auth::storage()->delete( "hauth_session.twitter.oauth_state" );
+		Hybrid_Auth::storage()->delete( "hauth_session.twitter.oauth_request_token" );
+		Hybrid_Auth::storage()->delete( "hauth_session.twitter.oauth_request_token_secret" );
+
+		Hybrid_Auth::storage()->delete( "hauth_session.friendster.session_key" );
+		Hybrid_Auth::storage()->delete( "hauth_session.friendster.auth_token" );
+		Hybrid_Auth::storage()->delete( "hauth_session.friendster.session_key" );
+
+		Hybrid_Auth::storage()->delete( "hauth_session.gowalla.access_token" );
+ 
+		Hybrid_Auth::storage()->delete( "hauth_session.linkedin.oauth_token" );
+		Hybrid_Auth::storage()->delete( "hauth_session.linkedin.oauth_token_secret" );
+		Hybrid_Auth::storage()->delete( "hauth_session.linkedin.oauth_callback_confirmed" );
+		Hybrid_Auth::storage()->delete( "hauth_session.linkedin.xoauth_request_auth_url" );
+		Hybrid_Auth::storage()->delete( "hauth_session.linkedin.oauth_expires_in" );
+
+		Hybrid_Auth::storage()->delete( "hauth_session.myspaceid.access_token" ); 
+		Hybrid_Auth::storage()->delete( "hauth_session.myspaceid.access_secret" ); 
+		Hybrid_Auth::storage()->delete( "hauth_session.myspaceid.request_token" ); 
+		Hybrid_Auth::storage()->delete( "hauth_session.myspaceid.request_secret" ); 
+		Hybrid_Auth::storage()->delete( "hauth_session.myspaceid.callback_confirmed" ); 
+
+		Hybrid_Auth::storage()->delete( "hauth_session.Tumblr.oauth_access_token" ); 
+		Hybrid_Auth::storage()->delete( "hauth_session.Tumblr.oauth_access_token_secret" ); 
+		Hybrid_Auth::storage()->delete( "hauth_session.Tumblr.oauth_state" ); 
+		Hybrid_Auth::storage()->delete( "hauth_session.Tumblr.oauth_request_token" ); 
+		Hybrid_Auth::storage()->delete( "hauth_session.Tumblr.oauth_request_token_secret" ); 
+
+		Hybrid_Auth::storage()->delete( "hauth_session.vimeo.oauth_request_token" );  
+		Hybrid_Auth::storage()->delete( "hauth_session.vimeo.oauth_request_token_secret" );  
+		Hybrid_Auth::storage()->delete( "hauth_session.vimeo.oauth_access_token" );  
+		Hybrid_Auth::storage()->delete( "hauth_session.vimeo.oauth_access_token_secret" );  
+		
+		Hybrid_Auth::storage()->delete( "hauth_session.live.access_token" ); 
 	}
 
-	// --------------------------------------------------------------------
-
-	/**
-	* Setup an adapter for a given provider
+   /**
+	* Factory for Hybrid_IdProvider classes.
+	*
+	* First argument may be a string containing the id of the account provider 
+	* ("called ID Provider"), e.g. 'Google' corresponds to class Providers_Google.
+	* This is case-insensitive and must be allowed in $GLOBAL_HYBRID_AUTH_IDPROVIDERS
+	*
+	* Second argument may be an associative array of key-value pairs. This is used
+	* as the argument to the ID Provider constructor. 
+	*
+	* @param  mixed $providerId 	String name of ID Provider.
+	* @param  mixed $params  		OPTIONAL; an array with ID Provider parameters.
+	*
+	* @return Provider_Adapter 
+	* @return NULL                  If Hybrid_Auth fail to build Hybrid_Provider_Proxy instance
 	*/ 
 	public static function setup( $providerId, $params = NULL )
 	{
-		Hybrid_Logger::debug( "Enter Hybrid_Auth::setup( $providerId )", $params );
+		Hybrid_Logger::info( "Enter Hybrid_Auth::setup()", array( $providerId, $params ) );
 
-		if( ! $params ){ 
-			$params = Hybrid_Auth::storage()->get( "hauth_session.$providerId.id_provider_params" );
-			
-			Hybrid_Logger::debug( "Hybrid_Auth::setup( $providerId ), no params given. Trying to get the sotred for this provider.", $params );
-		}
-
-		if( ! $params ){ 
-			$params = ARRAY();
-			
-			Hybrid_Logger::info( "Hybrid_Auth::setup( $providerId ), no stored params found for this provider. Initialize a new one for new session" );
-		}
-
-		if( ! isset( $params["hauth_return_to"] ) ){
-			$params["hauth_return_to"] = Hybrid_Auth::getCurrentUrl(); 
-		}
-
-		Hybrid_Logger::debug( "Hybrid_Auth::setup( $providerId ). HybridAuth Callback URL set to: ", $params["hauth_return_to"] );
+		// setup will logout any user connect, and rest the session
+		Hybrid_Auth::endSession();
 
 		# instantiate a new IDProvider Adapter
 		$provider   = new Hybrid_Provider_Adapter();
 
-		$provider->factory( $providerId, $params );
+		# try to setup the Provider obj with given parmas
+		try
+		{
+			if( ! isset( $params["hauth_return_to"] ) ){
+				$params["hauth_return_to"] = Hybrid_Auth::getCurrentUrl();
+			}
+ 
+			$provider->factory( $providerId, $params );
+		}
+		catch( Exception $e )
+		{
+			# if error 
+			Hybrid_Auth::setError( $e->getMessage(), $e->getCode(), $e->getTraceAsString() ); 
+
+			# and return nil
+			return NULL;
+		}
 
 		return $provider;
-	} 
+	}
 
-	// --------------------------------------------------------------------
-
-	/**
-	* Check if the current user is connected to a given provider
-	*/
-	public static function isConnectedWith( $providerId )
+   /**
+	* Factory for Hybrid_IdProvider classes.
+	*
+	* First argument may be a string containing the id of the account provider 
+	* ("called ID Provider"), e.g. 'Google' corresponds to class Providers_Google.
+	* This is case-insensitive and must be allowed in $GLOBAL_HYBRID_AUTH_IDPROVIDERS
+	*
+	* Second argument may be an associative array of key-value pairs. This is used
+	* as the argument to the ID Provider constructor. 
+	*
+	* @param  mixed $providerId 	String name of ID Provider. 
+	*
+	* @return Provider_Adapter 
+	* @return NULL                  If Hybrid_Auth fail to build Hybrid_Provider_Proxy instance
+	*/ 
+	public static function resetup( $providerId )
 	{
-		return (bool) Hybrid_Auth::storage()->get( "hauth_session.{$providerId}.is_logged_in" );
+		$params = Hybrid_Auth::storage()->get( "hauth_session.id_provider_params" );
+
+		Hybrid_Logger::info( "Enter Hybrid_Auth::resetup()", array( $providerId, $params ) );
+
+		# instantiate a new IDProvider Adapter
+		$provider   = new Hybrid_Provider_Adapter();
+
+		# try to setup the Provider obj with given parmas
+		try
+		{ 
+			$provider->factory( $providerId, $params );
+		}
+		catch( Exception $e )
+		{
+			# if error 
+			Hybrid_Auth::setError( $e->getMessage(), $e->getCode(), $e->getTraceAsString() ); 
+
+			# and return nil
+			return NULL;
+		}
+
+		return $provider;
+	}
+
+   /**
+	* Factory for Hybrid_IdProvider classes.
+	*
+	* End the user session
+	*/ 
+	public static function endSession()
+	{
+		Hybrid_Logger::info( "Enter Hybrid_Auth::endSession()" );
+
+		Hybrid_Auth::expireStorage(); 
+
+		return TRUE;
 	}
 
 	// --------------------------------------------------------------------
 
-	/**
-	* Return array listing all authenticated providers
-	*/ 
-	public static function getConnectedProviders()
+   /**
+	* Wakeup the current user session if true == Hybrid::hasSession() 
+	*
+	* @param	string
+	* @return	Hybrid_Provider_Adapter
+	*/
+	public static function wakeup( $hauthSession = NULL )
 	{
-		$idps = array();
 
-		foreach( Hybrid_Auth::$config["providers"] as $idpid => $params ){
-			if( Hybrid_Auth::isConnectedWith( $idpid ) ){
-				$idps[] = $idpid;
+		Hybrid_Logger::info( "Enter Hybrid_Auth::wakeup()", $hauthSession );
+
+		# if user has a session and loggedin IDP service, 
+		if( ! Hybrid_Auth::hasSession() )
+		{
+			return NULL;
+		}
+
+		# we restore theProvider internal id (id_provider_id) and params (id_provider_params) 
+		$params     = Hybrid_Auth::storage()->get( "hauth_session.id_provider_params" );
+		$providerId = Hybrid_Auth::storage()->get( "hauth_session.id_provider_id"     );
+
+		# try to re setup the IDProvider Adapter instance
+		$provider = new Hybrid_Provider_Adapter();
+
+		return $provider->factory( $providerId, $params );
+	}
+
+	// --------------------------------------------------------------------
+
+   /**
+	* Checks to see if there is a session in this PHP page request.
+	*
+	* @return boolean True if a session is present and current user 
+	*         is logged to the IDProvider, false otherwise.
+	*/
+	public static function hasSession()
+	{
+
+		Hybrid_Logger::info( "Enter Hybrid_Auth::hasSession()" );
+
+		# if hauth_session.hauth_token is set on storage system &
+		# if hauth_session.hauth_token is equal to current session_id() &
+		# if user is loggedin hauth_session.is_logged_in = TRUE
+		return 
+			( Hybrid_Auth::storage()->get( "hauth_session.hauth_token" ) == session_id() )
+			&& 
+			Hybrid_Auth::storage()->get( "hauth_session.is_logged_in" ) ;
+	}
+
+	// --------------------------------------------------------------------
+
+   /**
+	* Checks to see if there is a stored warning.
+	*
+	* warnings are stored in Hybrid::storage() Hybrid storage system
+	* and not displayed directly to user 
+	*
+	* @return boolean True if there is a warning.
+	*/
+	public static function hasWarning()
+	{
+
+		Hybrid_Logger::info( "Enter Hybrid_Auth::hasWarning()" );
+
+		return 
+			(bool) Hybrid_Auth::storage()->get( "hauth_session.warning" );
+	}
+
+	// --------------------------------------------------------------------
+
+   /**
+	* Add a warning message to warns stak.  
+	*/
+	public static function addWarning( $message )
+	{
+
+		Hybrid_Logger::info( "Enter Hybrid_Auth::addWarning()", $message );
+
+		$_warn = Hybrid_Auth::storage()->get( "hauth_session.warning" );
+
+		$_warn[$message] = time();
+
+		Hybrid_Auth::storage()->set( "hauth_session.warning", $_warn );
+	}
+
+	// --------------------------------------------------------------------
+
+   /**
+	* a naive warning message getter
+	*
+	* @return string very short warning message.
+	*/
+	public static function getWarningMessage()
+	{
+
+		Hybrid_Logger::info( "Enter Hybrid_Auth::getWarningMessage()" );
+
+		$_warn = Hybrid_Auth::storage()->get( "hauth_session.warning" );
+		$_mesg = "";
+
+		if( is_array( $_warn ) )
+		{
+			foreach( $_warn as $m => $t )
+			{
+				$_mesg .= "@$t: $m\n";
 			}
 		}
 
-		return $idps;
+		return $_mesg;
 	}
 
 	// --------------------------------------------------------------------
 
-	/**
-	* Return array listing all enabled providers as well as a flag if you are connected.
-	*/ 
-	public static function getProviders()
-	{
-		$idps = array();
-
-		foreach( Hybrid_Auth::$config["providers"] as $idpid => $params ){
-			if($params['enabled']) {
-				$idps[$idpid] = array( 'connected' => false );
-
-				if( Hybrid_Auth::isConnectedWith( $idpid ) ){
-					$idps[$idpid]['connected'] = true;
-				}
-			}
-		}
-
-		return $idps;
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* A generic function to logout all connected provider at once 
-	*/ 
-	public static function logoutAllProviders()
-	{
-		$idps = Hybrid_Auth::getConnectedProviders();
-
-		foreach( $idps as $idp ){
-			$adapter = Hybrid_Auth::getAdapter( $idp );
-
-			$adapter->logout();
-		}
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* Utility function, redirect to a given URL with php header or using javascript location.href
+   /**
+	* store error in HybridAuth cache system
 	*/
-	public static function redirect( $url, $mode = "PHP" )
+	public static function setError( $message, $code = NULL, $trace = NULL )
 	{
-		Hybrid_Logger::info( "Enter Hybrid_Auth::redirect( $url, $mode )" );
+		Hybrid_Logger::info( "Enter Hybrid_Auth::setError()", array( $message, $code, $trace ) );
 
-		if( $mode == "PHP" ){
+		Hybrid_Auth::storage()->set( "hauth_session.error.status" , 1        );
+		Hybrid_Auth::storage()->set( "hauth_session.error.message", $message );
+		Hybrid_Auth::storage()->set( "hauth_session.error.code"   , $code    );
+		Hybrid_Auth::storage()->set( "hauth_session.error.trace"  , $trace   );
+	}
+
+	// --------------------------------------------------------------------
+
+   /**
+	* Checks to see if there is a an error.
+	*
+	* errors are stored in Hybrid::storage() Hybrid storage system
+	* and not displayed directly to user 
+	*
+	* @return boolean True if there is an error.
+	*/
+	public static function hasError()
+	{
+
+		Hybrid_Logger::info( "Enter Hybrid_Auth::hasError()" );
+
+		return 
+			(bool) Hybrid_Auth::storage()->get( "hauth_session.error.status" );
+	}
+
+	// --------------------------------------------------------------------
+
+   /**
+	* a naive error message getter
+	*
+	* @return string very short error message.
+	*/
+	public static function getErrorMessage()
+	{
+
+		Hybrid_Logger::info( "Enter Hybrid_Auth::getErrorMessage()" );
+
+		return
+			Hybrid_Auth::storage()->get( "hauth_session.error.message" );
+	}
+
+	// --------------------------------------------------------------------
+
+   /**
+	* a naive error code getter
+	*
+	* @return int error code defined on Hybrid_Auth.
+	*/
+	public static function getErrorCode()
+	{
+
+		Hybrid_Logger::info( "Enter Hybrid_Auth::getErrorCode()" );
+
+		return 
+			Hybrid_Auth::storage()->get( "hauth_session.error.code" );
+	}
+
+	// --------------------------------------------------------------------
+
+   /**
+	* a naive error backtrace getter
+	*
+	* @return string detailled error backtrace as string.
+	*/
+	public static function getErrorTrace()
+	{
+
+		Hybrid_Logger::info( "Enter Hybrid_Auth::getErrorTrace()" );
+
+		return 
+			Hybrid_Auth::storage()->get( "hauth_session.error.trace" );
+	}
+
+	// --------------------------------------------------------------------
+
+   /**
+	* Checks to see if there is a an error.
+	*
+	* errors are stored in Hybrid::storage() Hybrid storage system
+	* and not displayed directly to user 
+	*
+	* @return boolean True if there is an error.
+	*/
+	public static function redirect( $url )
+	{
+		GLOBAL $GLOBAL_HYBRID_AUTH_REDIRECT_MODE;
+
+		Hybrid_Logger::info( "Enter Hybrid_Auth::redirect()", $url );
+
+		if( $GLOBAL_HYBRID_AUTH_REDIRECT_MODE == "PHP" )
+		{
 			header( "Location: $url" ) ;
 		}
-		elseif( $mode == "JS" ){
+		elseif( $GLOBAL_HYBRID_AUTH_REDIRECT_MODE == "JS" )
+		{
 			echo '<html>';
 			echo '<head>';
 			echo '<script type="text/javascript">';
@@ -364,48 +517,56 @@ class Hybrid_Auth
 			echo '</script>';
 			echo '</head>';
 			echo '<body onload="redirect()">';
-			echo 'Redirecting, please wait...';
 			echo '</body>';
 			echo '</html>'; 
 		}
 
-		die();
+		exit( 0 );
 	}
 
 	// --------------------------------------------------------------------
 
-	/**
-	* Utility function, return the current url. TRUE to get $_SERVER['REQUEST_URI'], FALSE for $_SERVER['PHP_SELF']
+   /**
+	* @return string the current url for requested PHP page.
 	*/
-	public static function getCurrentUrl( $request_uri = true ) 
+	public static function getCurrentUrl() 
 	{
-		if(
-			isset( $_SERVER['HTTPS'] ) && ( $_SERVER['HTTPS'] == 'on' || $_SERVER['HTTPS'] == 1 )
-		|| 	isset( $_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] == 'https'
-		){
-			$protocol = 'https://';
-		}
-		else {
-			$protocol = 'http://';
-		}
 
-		$url = $protocol . $_SERVER['SERVER_NAME'];
+		Hybrid_Logger::info( "Enter Hybrid_Auth::getCurrentUrl()" );
 
-		// use port if non default
-		$url .= 
-			isset( $_SERVER['SERVER_PORT'] ) 
-			&&( ($protocol === 'http://' && $_SERVER['SERVER_PORT'] != 80) || ($protocol === 'https://' && $_SERVER['SERVER_PORT'] != 443) )
-			? ':' . $_SERVER['SERVER_PORT'] 
-			: '';
+		$scheme = 'http';
 
-		if( $request_uri ){
-			$url .= $_SERVER['REQUEST_URI'];
-		}
-		else{
-			$url .= $_SERVER['PHP_SELF'];
+		if ( isset( $_SERVER['HTTPS'] ) and $_SERVER['HTTPS'] == 'on' )
+		{
+			$scheme .= 's';
 		}
 
-		// return current url
-		return $url;
+		return sprintf
+		(
+			"%s://%s:%s%s"				, 
+			$scheme						, 
+			$_SERVER['SERVER_NAME']		, 
+			$_SERVER['SERVER_PORT']		, 
+			$_SERVER['PHP_SELF']
+		); 
+	}
+
+	// --------------------------------------------------------------------
+
+   /**
+	* @return string associated text message in HybridAuth lang file
+	*/
+	public static function text( $id ) 
+	{
+		GLOBAL $GLOBAL_HYBRID_AUTH_TEXT, $GLOBAL_HYBRID_AUTH_TEXT_LANG;
+
+		Hybrid_Logger::info( "Enter Hybrid_Auth::text()", $id );
+
+		if ( isset( $GLOBAL_HYBRID_AUTH_TEXT[$GLOBAL_HYBRID_AUTH_TEXT_LANG][$id] ) )
+		{
+			return $GLOBAL_HYBRID_AUTH_TEXT[$GLOBAL_HYBRID_AUTH_TEXT_LANG][$id];
+		}
+
+		return  NULL; 
 	}
 }

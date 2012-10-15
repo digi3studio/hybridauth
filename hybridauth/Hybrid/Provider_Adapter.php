@@ -1,85 +1,100 @@
 <?php
-/*!
-* HybridAuth
-* http://hybridauth.sourceforge.net | http://github.com/hybridauth/hybridauth
-* (c) 2009-2012, HybridAuth authors | http://hybridauth.sourceforge.net/licenses.html
-*/
+/**
+ * HybridAuth
+ * 
+ * An open source Web based Single-Sign-On PHP Library used to authentificates users with
+ * major Web account providers and accessing social and data apis at Google, Facebook,
+ * Yahoo!, MySpace, Twitter, Windows live ID, etc. 
+ *
+ * Copyright (c) 2009 (http://hybridauth.sourceforge.net)
+ *
+ * @package     Hybrid_Auth
+ * @author      hybridAuth Dev Team
+ * @copyright   Copyright (c) 2009, hybridAuth Dev Team.
+ * @license     http://hybridauth.sourceforge.net/licenses.html under MIT and GPL
+ * @link        http://hybridauth.sourceforge.net 
+ */
+
+// ------------------------------------------------------------------------
 
 /**
- * Hybrid_Provider_Adapter is the basic class which Hybrid_Auth will use
- * to connect users to a given provider. 
- * 
- * Basically Hybrid_Provider_Adapterwill create a bridge from your php 
- * application to the provider api.
- * 
- * Hybrid_Auth will automatically load Hybrid_Provider_Adapter and create
- * an instance of it for each authenticated provider.
+ * The Hybrid_Provider_Adapter class is a kinda of factory to create providers wrapper instances, 
+ *
+ * @package    Hybrid_Auth 
+ * @author     Zachy <hybridauth@gmail.com>
+ * @version    1.0
+ * @since      HybridAuth 1.0.1 
+ * @link       http://hybridauth.sourceforge.net/userguide/Supported_identity_providers_and_setup_keys.html
+ * @see        Hybrid_Auth
+ * @see        Hybrid_Provider_Model
  */
 class Hybrid_Provider_Adapter
 {
-	/* Provider ID (or unique name) */
-	public $id       = NULL ;
-
-	/* Provider adapter specific config */
-	public $config   = NULL ;
-
-	/* Provider adapter extra parameters */
-	public $params   = NULL ; 
-
-	/* Provider adapter wrapper path */
-	public $wrapper  = NULL ;
-
-	/* Provider adapter instance */
-	public $adapter  = NULL ;
-
-	// --------------------------------------------------------------------
-
-	/**
-	* create a new adapter switch IDp name or ID
-	*
-	* @param string  $id      The id or name of the IDp
-	* @param array   $params  (optional) required parameters by the adapter 
+   /**
+	* IDp ID (or unique name)
 	*/
+	var $id       = NULL ;
+
+   /**
+	* IDp adapter config on hybrid.config.php
+	*/
+	var $config   = NULL ;
+
+   /**
+	* IDp adapter requireds params
+	*/
+	var $params   = NULL ; 
+
+   /**
+	* IDp adapter path
+	*/
+	var $wrapper  = NULL ;
+
+   /**
+	* IDp adapter instance
+	*/
+	var $adapter  = NULL ;
+
+    /**
+     * create a new adapter switch IDp name or ID
+     *
+     * @param string  $id      The id or name of the IDp
+     * @param array   $params  (optional) required parameters by the adapter 
+     */
 	function factory( $id, $params = NULL )
 	{
-		Hybrid_Logger::info( "Enter Hybrid_Provider_Adapter::factory( $id )" );
+
+		Hybrid_Logger::info( "Enter Hybrid_Provider_Adapter::factory()", array( $id, $params ) );
+
+		GLOBAL $GLOBAL_HYBRID_AUTH_PATH_CORE; 
 
 		# init the adapter config and params
 		$this->id     = $id;
 		$this->params = $params;
-		$this->id     = $this->getProviderCiId( $this->id );
 		$this->config = $this->getConfigById( $this->id );
 
-		# check the IDp id
-		if( ! $this->id ){
-			throw new Exception( "No provider ID specified.", 2 ); 
-		}
-
 		# check the IDp config
-		if( ! $this->config ){
-			throw new Exception( "Unknown Provider ID, check your configuration file.", 3 ); 
+		if( ! $this->config )
+		{
+			throw new Exception( "Unknown IdProvider [{$this->id}], check your configuration file!" ); 
 		}
 
 		# check the IDp adapter is enabled
-		if( ! $this->config["enabled"] ){
-			throw new Exception( "The provider '{$this->id}' is not enabled.", 3 );
+		if( ! $this->config["enabled"] )
+		{
+			throw new Exception( "IdProvider [{$this->id}] is not enabled!" );
+		}
+
+		# check the IDp has a configured wrapper 
+		if( empty( $this->config["wrapper"] ) )
+		{
+			throw new Exception( "Path to the provider wrapper of [{$this->id}] is set to NULL!" );
 		}
 
 		# include the adapter wrapper
-		if( isset( $this->config["wrapper"] ) && is_array( $this->config["wrapper"] ) ){
-			require_once $this->config["wrapper"]["path"];
+		require_once $GLOBAL_HYBRID_AUTH_PATH_CORE . "/" . $this->config["wrapper"] ;
 
-			if( ! class_exists( $this->config["wrapper"]["class"] ) ){
-				throw new Exception( "Unable to load the adapter class.", 3 );
-			}
-
-			$this->wrapper = $this->config["wrapper"]["class"];
-		}
-		else{ 
-			require_once Hybrid_Auth::$config["path_providers"] . $this->id . ".php" ;
-
-			$this->wrapper = "Hybrid_Providers_" . $this->id; 
-		}
+		$this->wrapper = "Hybrid_Providers_" . $this->id;
 
 		# create the adapter instance, and pass the current params and config
 		$this->adapter = new $this->wrapper( $this->id, $this->config, $this->params );
@@ -89,64 +104,136 @@ class Hybrid_Provider_Adapter
 
 	// --------------------------------------------------------------------
 
-	/**
-	* Hybrid_Provider_Adapter::login(), prepare the user session and the authentification request
-	* for index.php
+   /**
+	* Naive getter of the current adapter instance
 	*/
-	function login()
+	function adapter()
 	{
-		Hybrid_Logger::info( "Enter Hybrid_Provider_Adapter::login( {$this->id} ) " );
-
-		if( ! $this->adapter ){
-			throw new Exception( "Hybrid_Provider_Adapter::login() should not directly used." );
-		}
-
-		// clear all unneeded params
-		foreach( Hybrid_Auth::$config["providers"] as $idpid => $params ){
-			Hybrid_Auth::storage()->delete( "hauth_session.{$idpid}.hauth_return_to"    );
-			Hybrid_Auth::storage()->delete( "hauth_session.{$idpid}.hauth_endpoint"     );
-			Hybrid_Auth::storage()->delete( "hauth_session.{$idpid}.id_provider_params" );
-		}
-
-		// make a fresh start
-		$this->logout();
-
-		# get hybridauth base url
-		$HYBRID_AUTH_URL_BASE = Hybrid_Auth::$config["base_url"];
-
-		# we make use of session_id() as storage hash to identify the current user
-		# using session_regenerate_id() will be a problem, but ..
-		$this->params["hauth_token"] = session_id();
-
-		# set request timestamp
-		$this->params["hauth_time"]  = time();
-
-		# for default HybridAuth endpoint url hauth_login_start_url
-		# 	auth.start  required  the IDp ID
-		# 	auth.time   optional  login request timestamp
-		$this->params["login_start"] = $HYBRID_AUTH_URL_BASE . ( strpos( $HYBRID_AUTH_URL_BASE, '?' ) ? '&' : '?' ) . "hauth.start={$this->id}&hauth.time={$this->params["hauth_time"]}";
-
-		# for default HybridAuth endpoint url hauth_login_done_url
-		# 	auth.done   required  the IDp ID
-		$this->params["login_done"]  = $HYBRID_AUTH_URL_BASE . ( strpos( $HYBRID_AUTH_URL_BASE, '?' ) ? '&' : '?' ) . "hauth.done={$this->id}";
-
-		Hybrid_Auth::storage()->set( "hauth_session.{$this->id}.hauth_return_to"    , $this->params["hauth_return_to"] );
-		Hybrid_Auth::storage()->set( "hauth_session.{$this->id}.hauth_endpoint"     , $this->params["login_done"] ); 
-		Hybrid_Auth::storage()->set( "hauth_session.{$this->id}.id_provider_params" , $this->params );
-
-		// store config to be used by the end point 
-		Hybrid_Auth::storage()->config( "CONFIG", Hybrid_Auth::$config );
-
-		// move on
-		Hybrid_Logger::debug( "Hybrid_Provider_Adapter::login( {$this->id} ), redirect the user to login_start URL." );
-
-		Hybrid_Auth::redirect( $this->params["login_start"] );
+		return $this->adapter->adapter;
 	}
 
 	// --------------------------------------------------------------------
 
-	/**
-	* let hybridauth forget all about the user for the current provider
+   /**
+	* Naive getter of the current loggedin user
+	*/
+	function user()
+	{
+		return $this->adapter->user;
+	}
+
+   /**
+	* Naive getter of the current connected IDp API client
+	*/
+	function api()
+	{
+		return $this->adapter->api;
+	}
+
+	// --------------------------------------------------------------------
+
+    /**
+     * This is the methode that should be specified when a user requests a sign in whith an IDp.
+     * 
+     * Hybrid_Provider_Adapter::login(), prepare the user session and the authentification request
+	 * for hybrid.endpoint.php
+     */
+	function login()
+	{
+		Hybrid_Logger::info( "Enter Hybrid_Provider_Adapter::login() " );
+
+		GLOBAL $GLOBAL_HYBRID_AUTH_URL_EP;  
+		GLOBAL $GLOBAL_HYBRID_AUTH_BYPASS_EP_MODE; 
+
+		if( ! $this->adapter )
+		{
+			return NULL;
+		}
+
+		# we make use of session_id() as storage hash to identify the current user
+		# using session_regenerate_id() will be a problem, but ..
+		$hauth_token = session_id();
+
+		# set request timestamp
+		$hauth_time  = time();
+
+		# set start login URL and Login Callback URL,
+		# developer are free to change default HybridAuth endpoint urls by using
+		# hauth_login_start_url and hauth_login_done_url parameters
+
+		# for default HybridAuth endpoint url hauth_login_start_url
+		# 	auth.start  required  the IDp ID
+		# 	auth.token  optional  the user seesion_id
+		# 	auth.time   optional  login request timestamp
+
+		# for default HybridAuth endpoint url hauth_login_done_url
+		# 	auth.done   required  the IDp ID
+		# 	auth.token  optional  the user seesion_id
+		# 	auth.time   optional  login request timestamp
+		$login_start = isset( $this->params["hauth_login_start_url"] ) && $this->params["hauth_login_start_url"]
+							? $this->params["hauth_login_start_url"] : 
+								(
+									$GLOBAL_HYBRID_AUTH_URL_EP . ( strpos( $GLOBAL_HYBRID_AUTH_URL_EP, '?' ) ? '&' : '?' ) . "hauth.start={$this->id}"
+								);
+
+		$login_done  = isset( $this->params["hauth_login_done_url"] ) && $this->params["hauth_login_done_url"]
+							? $this->params["hauth_login_done_url"] : 
+								(
+									$GLOBAL_HYBRID_AUTH_URL_EP . ( strpos( $GLOBAL_HYBRID_AUTH_URL_EP, '?' ) ? '&' : '?' ) . "hauth.done={$this->id}"
+								);
+
+		Hybrid_Logger::info( "Hybrid_Provider_Adapter::login(), Create URL LOGIN_START", $login_start );
+		Hybrid_Logger::info( "Hybrid_Provider_Adapter::login(), Create URL LOGIN_DONE" , $login_done );
+
+		# reset the saved session for the current user 
+		Hybrid_Auth::expireStorage();
+
+		Hybrid_Auth::storage()->set( "hauth_session.hauth_token"		, $hauth_token  );
+		Hybrid_Auth::storage()->set( "hauth_session.hauth_time"		    , $hauth_time  );
+		Hybrid_Auth::storage()->set( "hauth_session.hauth_return_to"	, $this->params["hauth_return_to"] );
+		Hybrid_Auth::storage()->set( "hauth_session.hauth_endpoint"	    , $login_done   );
+		Hybrid_Auth::storage()->set( "hauth_session.id_provider_id"		, $this->id     );
+		Hybrid_Auth::storage()->set( "hauth_session.id_provider_params"	, $this->params );  
+
+		# if by pass endpoint, we return to hauth_return_to
+		# //! only used for testing purpose !\\
+		if( $GLOBAL_HYBRID_AUTH_BYPASS_EP_MODE )
+		{
+			Hybrid_Auth::addWarning( Hybrid_Auth::text( "BYPASS_EP_MODE_ACTIVATED" ) ); 
+
+			Hybrid_Auth::storage()->set( "hauth_session.is_logged_in", 1 );
+
+			# Populate the user profile with some fucked data, if $GLOBAL_HYBRID_AUTH_BYPASS_EP_MODE = TRUE 
+			$this->adapter->user->populateProfile();
+
+			Hybrid_Auth::storage()->set( "hauth_session.user.data", $this->adapter->user );
+
+			# callback the return_to callback url
+			Hybrid_Auth::redirect( $this->params["hauth_return_to"] );
+		} 
+
+		Hybrid_Logger::debug( "Hybrid_Provider_Adapter::login(), SELF INSPECT", $this );
+
+		Hybrid_Logger::info( "Hybrid_Provider_Adapter::login(), REDIRECT TO LOGIN_START URL", $login_start );
+
+		Hybrid_Auth::redirect( $login_start );
+	}
+
+	// --------------------------------------------------------------------
+
+   /**
+	* just expire local user session, but dont logout the user from the IDp
+	*/
+	function deconnect()
+	{
+		// reset user session
+		Hybrid_Auth::expireStorage(); 
+	} 
+
+	// --------------------------------------------------------------------
+
+   /**
+	* sign out the user from the IDp if possible, and erase his local session, 
 	*/
 	function logout()
 	{
@@ -155,129 +242,70 @@ class Hybrid_Provider_Adapter
 
 	// --------------------------------------------------------------------
 
-	/**
-	* return true if the user is connected to the current provider
-	*/ 
-	public function isUserConnected()
-	{
-		return $this->adapter->isUserConnected();
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* handle :
-	*   getUserProfile()
-	*   getUserContacts()
-	*   getUserActivity() 
-	*   setUserStatus() 
-	*/ 
-	public function __call( $name, $arguments ) 
-	{
-		Hybrid_Logger::info( "Enter Hybrid_Provider_Adapter::$name(), Provider: {$this->id}" );
-
-		if ( ! $this->isUserConnected() ){
-			throw new Exception( "User not connected to the provider {$this->id}.", 7 );
-		} 
-
-		if ( ! method_exists( $this->adapter, $name ) ){
-			throw new Exception( "Call to undefined function Hybrid_Providers_{$this->id}::$name()." );
-		}
-
-		if( count( $arguments ) ){
-			return $this->adapter->$name( $arguments[0] ); 
-		} 
-		else{
-			return $this->adapter->$name(); 
-		}
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* If the user is connected, then return the access_token and access_token_secret
-	* if the provider api use oauth
+   /**
+	* Refresh the user data (profile/contacts) from the IDp API if $fromCache is FALSE
+	* else 
+	* if we return the stored user data in HybridAuth storage system
+	*   
+	* Note: HybridAuth dont provide users contats on this version
 	*/
-	public function getAccessToken()
+	function getUserData( $fromCache = TRUE )
 	{
-		if( ! $this->adapter->isUserConnected() ){
-			Hybrid_Logger::error( "User not connected to the provider." );
+		# if we are asked to recuperate the cached user data
+		if( $fromCache && Hybrid_Auth::storage()->get( "hauth_session.user.data" ) )
+		{
+			$this->adapter->user = Hybrid_Auth::storage()->get( "hauth_session.user.data" );
+		}
+		# else, we force the IDp adapter to refresh them by using their api clients
+		else
+		{
+			$this->adapter->getUserProfile();
 
-			throw new Exception( "User not connected to the provider.", 7 );
+			# for future use
+			#    $this->adapter->getUserContacts();
+
+			# re store the user data for future uses
+			Hybrid_Auth::storage()->set( "hauth_session.user.data", $this->adapter->user );
 		}
 
-		return
-			ARRAY(
-				"access_token"        => $this->adapter->token( "access_token" )       , // OAuth access token
-				"access_token_secret" => $this->adapter->token( "access_token_secret" ), // OAuth access token secret
-				"refresh_token"       => $this->adapter->token( "refresh_token" )      , // OAuth refresh token
-				"expires_in"          => $this->adapter->token( "expires_in" )         , // OPTIONAL. The duration in seconds of the access token lifetime
-				"expires_at"          => $this->adapter->token( "expires_at" )         , // OPTIONAL. Timestamp when the access_token expire. if not provided by the social api, then it should be calculated: expires_at = now + expires_in
-			);
+		return $this->adapter->user;
 	}
 
 	// --------------------------------------------------------------------
 
-	/**
-	* Naive getter of the current connected IDp API client
-	*/
-	function api()
+    /**
+     * find the IDp config on hybrid.config.php HybridAuth configuration file
+     *
+     * @param string  $id      The id or name of the IDp
+     *
+     * @return array if the IDp config founded on $GLOBAL_HYBRID_AUTH_IDPROVIDERS
+     * @return NULL if no match
+     */
+	function getConfigById( $id )
 	{
-		if( ! $this->adapter->isUserConnected() ){
-			Hybrid_Logger::error( "User not connected to the provider." );
+		GLOBAL $GLOBAL_HYBRID_AUTH_IDPROVIDERS; 
 
-			throw new Exception( "User not connected to the provider.", 7 );
+		Hybrid_Logger::info( "Enter Hybrid_Provider_Adapter::getConfigById()", $id );
+
+		if( isset( $GLOBAL_HYBRID_AUTH_IDPROVIDERS[$id] ) )
+		{ 
+			return $GLOBAL_HYBRID_AUTH_IDPROVIDERS[$id];
 		}
 
-		return $this->adapter->api;
+		return NULL;
 	}
 
 	// --------------------------------------------------------------------
 
-	/**
+   /**
 	* redirect the user to hauth_return_to (the callback url)
 	*/
 	function returnToCallbackUrl()
 	{ 
-		// get the stored callback url
-		$callback_url = Hybrid_Auth::storage()->get( "hauth_session.{$this->id}.hauth_return_to" );
+		Hybrid_Logger::info( "Enter Hybrid_Provider_Adapter::returnToCallbackUrl()", Hybrid_Auth::storage()->get( "hauth_session.hauth_return_to" ) );
 
-		// remove some unneed'd stored data 
-		Hybrid_Auth::storage()->delete( "hauth_session.{$this->id}.hauth_return_to"    );
-		Hybrid_Auth::storage()->delete( "hauth_session.{$this->id}.hauth_endpoint"     );
-		Hybrid_Auth::storage()->delete( "hauth_session.{$this->id}.id_provider_params" );
+		sleep( 1 );
 
-		// back to home
-		Hybrid_Auth::redirect( $callback_url );
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* return the provider config by id
-	*/
-	function getConfigById( $id )
-	{ 
-		if( isset( Hybrid_Auth::$config["providers"][$id] ) ){
-			return Hybrid_Auth::$config["providers"][$id];
-		}
-
-		return NULL;
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* return the provider config by id; insensitive
-	*/
-	function getProviderCiId( $id )
-	{
-		foreach( Hybrid_Auth::$config["providers"] as $idpid => $params ){
-			if( strtolower( $idpid ) == strtolower( $id ) ){
-				return $idpid;
-			}
-		}
-
-		return NULL;
+		Hybrid_Auth::redirect( Hybrid_Auth::storage()->get( "hauth_session.hauth_return_to" ) );
 	}
 }

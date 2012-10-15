@@ -1,79 +1,101 @@
 <?php
-/*!
-* HybridAuth
-* http://hybridauth.sourceforge.net | http://github.com/hybridauth/hybridauth
-* (c) 2009-2012, HybridAuth authors | http://hybridauth.sourceforge.net/licenses.html 
-*/
+/**
+ * HybridAuth
+ * 
+ * An open source Web based Single-Sign-On PHP Library used to authentificates users with
+ * major Web account providers and accessing social and data apis at Google, Facebook,
+ * Yahoo!, MySpace, Twitter, Windows live ID, etc. 
+ *
+ * Copyright (c) 2009 (http://hybridauth.sourceforge.net)
+ *
+ * @package     Hybrid_Auth
+ * @author      hybridAuth Dev Team
+ * @copyright   Copyright (c) 2009, hybridAuth Dev Team.
+ * @license     http://hybridauth.sourceforge.net/licenses.html under MIT and GPL
+ * @link        http://hybridauth.sourceforge.net 
+ */
+
+// ------------------------------------------------------------------------
 
 /**
- * Hybrid_Provider_Model provide a common interface for supported IDps on HybridAuth.
+ * The Providers_Model class is a simple abstract model for providers wrappers 
  *
- * Basically, each provider adapter has to define at least 4 methods:
- *   Hybrid_Providers_{provider_name}::initialize()
- *   Hybrid_Providers_{provider_name}::loginBegin()
- *   Hybrid_Providers_{provider_name}::loginFinish()
- *   Hybrid_Providers_{provider_name}::getUserProfile()
- *
- * HybridAuth also come with three others models
- *   Class Hybrid_Provider_Model_OpenID for providers that uses the OpenID 1 and 2 protocol.
- *   Class Hybrid_Provider_Model_OAuth1 for providers that uses the OAuth 1 protocol.
- *   Class Hybrid_Provider_Model_OAuth2 for providers that uses the OAuth 2 protocol.
+ * @package    Hybrid_Auth 
+ * @author     Zachy <hybridauth@gmail.com>
+ * @version    1.0
+ * @since      HybridAuth 1.0.1 
+ * @link       http://hybridauth.sourceforge.net/userguide/Supported_identity_providers_and_setup_keys.html
+ * @see        Hybrid_Provider_Adapter
  */
 abstract class Hybrid_Provider_Model
 {
-	/* IDp ID (or unique name) */
-	public $providerId = NULL;
+   /**
+	* Hybrid_User obj, represents the current user
+	*/
+	var $user             = NULL;
 
-	/* specific provider adapter config */
-	public $config     = NULL;
+   /**
+	* IDp adapter config on hybridauth.php
+	*/
+	var $config           = NULL;
 
-   	/* provider extra parameters */
-	public $params     = NULL;
+   /**
+	* IDp adapter requireds params
+	*/
+	var $params           = NULL;
 
-	/* Endpoint URL for that provider */
-	public $endpoint   = NULL; 
+   /**
+	* IDp ID (or unique name)
+	*/
+	var $providerId       = NULL; 
 
-	/* Hybrid_User obj, represents the current loggedin user */
-	public $user       = NULL;
+   /**
+	* the IDp api client (optional)
+	*/
+	var $api              = NULL; 
 
-	/* the provider api client (optional) */
-	public $api        = NULL; 
-
-	/**
-	* common providers adapter constructor
+   /**
+	* common IDp wrappers constructor
 	*/
 	function __construct( $providerId, $config, $params = NULL )
 	{
+		Hybrid_Logger::info( "Enter [{$this->providerId}]::__construct()" );
+		
+		$this->config     = $config;
+		$this->providerId = $providerId;
+
 		# init the IDp adapter parameters, get them from the cache if possible
-		if( ! $params ){
-			$this->params = Hybrid_Auth::storage()->get( "hauth_session.$providerId.id_provider_params" );
+		if( ! $params )
+		{
+			$this->params = Hybrid_Auth::storage()->get( "hauth_session.id_provider_params" );
 		}
-		else{
+		else
+		{
 			$this->params = $params;
 		}
 
-		// idp id
-		$this->providerId = $providerId;
+		Hybrid_Logger::debug( "[{$this->providerId}]::__construct(), set wrapper params", $this->params );
 
-		// set HybridAuth endpoint for this provider
-		$this->endpoint = Hybrid_Auth::storage()->get( "hauth_session.$providerId.hauth_endpoint" );
+		# init the current user data container, get them from the cache if possible
+		if( Hybrid_Auth::storage()->get( "hauth_session.user.data" ) )
+		{
+			$this->user = Hybrid_Auth::storage()->get( "hauth_session.user.data" );
+		}
+		else
+		{
+			$this->user = new Hybrid_User( $this->providerId );
+		}
 
-		// idp config
-		$this->config = $config;
+		Hybrid_Logger::debug( "[{$this->providerId}]::__construct(), set user data", $this->user );
 
-		// new user instance
-		$this->user = new Hybrid_User();
-		$this->user->providerId = $providerId;
+		$this->initialize();
 
-		// initialize the current provider adapter
-		$this->initialize(); 
-
-		Hybrid_Logger::debug( "Hybrid_Provider_Model::__construct( $providerId ) initialized. dump current adapter instance: ", serialize( $this ) );
+		Hybrid_Logger::debug( "[{$this->providerId}]::__construct(), wrapper initialized", $this->api );
 	}
 
 	// --------------------------------------------------------------------
 
-	/**
+   /**
 	* IDp wrappers initializer
 	*
 	* The main job of wrappers initializer is to performs (depend on the IDp api client it self): 
@@ -86,146 +108,61 @@ abstract class Hybrid_Provider_Model
 
 	// --------------------------------------------------------------------
 
-	/**
+   /**
 	* begin login 
 	*/
 	abstract protected function loginBegin();
 
 	// --------------------------------------------------------------------
 
-	/**
+   /**
 	* finish login
 	*/
 	abstract protected function loginFinish();
 
 	// --------------------------------------------------------------------
 
-   	/**
-	* generic logout, just erase current provider adapter stored data to let Hybrid_Auth all forget about it
+   /**
+	* sign out the user from the IDp if possible, and erase his local session 
 	*/
-	function logout()
-	{
-		Hybrid_Logger::info( "Enter [{$this->providerId}]::logout()" );
+	abstract protected function logout();
 
-		$this->clearTokens();
+	// --------------------------------------------------------------------
+
+   /**
+	* a common Method, just expire local user session, but dont logout the user from the IDp 
+	*/
+	function deconnect()
+	{ 
+		Hybrid_Auth::expireStorage();
 
 		return TRUE;
 	}
 
 	// --------------------------------------------------------------------
 
-	/**
-	* grab the user profile from the IDp api client
+   /**
+	* load the user profile from the IDp api client
 	*/
-	function getUserProfile()
-	{
-		Hybrid_Logger::error( "HybridAuth do not provide users contats list for {$this->providerId} yet." ); 
-		
-		throw new Exception( "Provider does not support this feature.", 8 ); 
-	}
+	abstract protected function getUserProfile();
 
 	// --------------------------------------------------------------------
 
-	/**
-	* load the current logged in user contacts list from the IDp api client  
+   /**
+	* load the current logged in user contacts list from the IDp api client 
+	*
+	* HybridAuth dont provide users contats on version 1.0.x
 	*/
 	function getUserContacts() 
 	{
-		Hybrid_Logger::error( "HybridAuth do not provide users contats list for {$this->providerId} yet." ); 
-		
-		throw new Exception( "Provider does not support this feature.", 8 ); 
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* return the user activity stream  
-	*/
-	function getUserActivity( $stream ) 
-	{
-		Hybrid_Logger::error( "HybridAuth do not provide user's activity stream for {$this->providerId} yet." ); 
-		
-		throw new Exception( "Provider does not support this feature.", 8 ); 
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* return the user activity stream  
-	*/ 
-	function setUserStatus( $status )
-	{
-		Hybrid_Logger::error( "HybridAuth do not provide user's activity stream for {$this->providerId} yet." ); 
-		
-		throw new Exception( "Provider does not support this feature.", 8 ); 
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* return true if the user is connected to the current provider
-	*/ 
-	public function isUserConnected()
-	{
-		return (bool) Hybrid_Auth::storage()->get( "hauth_session.{$this->providerId}.is_logged_in" );
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* set user to connected 
-	*/ 
-	public function setUserConnected()
-	{
-		Hybrid_Logger::info( "Enter [{$this->providerId}]::setUserConnected()" );
-		
-		Hybrid_Auth::storage()->set( "hauth_session.{$this->providerId}.is_logged_in", 1 );
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* set user to unconnected 
-	*/ 
-	public function setUserUnconnected()
-	{
-		Hybrid_Logger::info( "Enter [{$this->providerId}]::setUserUnconnected()" );
-		
-		Hybrid_Auth::storage()->set( "hauth_session.{$this->providerId}.is_logged_in", 0 ); 
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* get or set a token 
-	*/ 
-	public function token( $token, $value = NULL )
-	{
-		if( $value === NULL ){
-			return Hybrid_Auth::storage()->get( "hauth_session.{$this->providerId}.token.$token" );
+		# to access this area, the user have to be loggedin with an IDp an has a HybridAuth session
+		if ( ! Hybrid_Auth::hasSession() )
+		{
+			throw new Exception( "HybridAuth can't access user profile data. The current user have to sign in with [{$this->providerId}] before any request!" );
 		}
-		else{
-			Hybrid_Auth::storage()->set( "hauth_session.{$this->providerId}.token.$token", $value );
-		}
-	}
 
-	// --------------------------------------------------------------------
+		Hybrid_Auth::addWarning( Hybrid_Auth::text( "GET_USER_CONTACTS_UNSUPPORTED_WARNING" ) ); 
 
-	/**
-	* delete a stored token 
-	*/ 
-	public function deleteToken( $token )
-	{
-		Hybrid_Auth::storage()->delete( "hauth_session.{$this->providerId}.token.$token" );
-	}
-
-	// --------------------------------------------------------------------
-
-	/**
-	* clear all existen tokens for this provider
-	*/ 
-	public function clearTokens()
-	{ 
-		Hybrid_Auth::storage()->deleteMatch( "hauth_session.{$this->providerId}." );
+		return NULL;
 	}
 }
